@@ -44,6 +44,14 @@ _KNOWLEDGE_TOOLS = ("session_search", "read_file", "skill_view", "web_extract", 
 # search probe AND a source read — the standard non-retrieval lookup sequence.
 REPLACED_PER_LOOKUP = 2.0
 
+# Meta lane pricing — the ledger has no price for api.meta.ai (cost_status
+# unknown), so cost is computed from the model's public list rates.
+# muse-spark-1.3-contributor tier (training rights in exchange for the
+# discount; the standard muse-spark-1.3 ID is $1.25/$4.25): $/1M tokens.
+# Sources: Baseer model listing, explainx.ai cost page, MyClaw.ai 1.3 pricing
+# table (Oct 2026).
+_META_RATES_PER_M = {"input": 0.10, "output": 0.20, "cached": 0.002}
+
 _cache: Dict[str, Any] = {}
 _cache_at = 0.0
 _cache_lock = threading.Lock()
@@ -152,6 +160,12 @@ def _scan_db(db: Path, buckets: Dict[str, Dict[str, List[float]]], day_index: Di
             series = buckets.setdefault(lane, _empty_series(list(day_index)))
             vals = (float(in_tok or 0), float(out_tok or 0), float(cache_tok or 0),
                     float(calls or 0), float(cost or 0))
+            # The ledger prices the meta lane as unknown (est cost 0) — compute
+            # it from the public list rates instead so the chart shows reality.
+            if lane == "meta":
+                vals = vals[:4] + ((vals[0] * _META_RATES_PER_M["input"]
+                                    + vals[2] * _META_RATES_PER_M["cached"]
+                                    + vals[1] * _META_RATES_PER_M["output"]) / 1_000_000.0,)
             w_by_day = weights.get(sid)
             if w_by_day:
                 total_w = sum(w_by_day.values())
@@ -298,6 +312,9 @@ def _build_payload() -> Dict[str, Any]:
                 "avoided_tokens_per_call": avoided_per_call,
                 "blended_usd_per_token": blended_rate,
                 "replaced_per_lookup": REPLACED_PER_LOOKUP,
+                "meta_rates_per_m": dict(_META_RATES_PER_M),
+                "meta_rates_source": ("muse-spark-1.3-contributor public list pricing "
+                                      "(Baseer / explainx.ai / MyClaw.ai, Oct 2026)"),
                 "formula": ("saved/day = vectorizer_calls/day × max(0, "
                             "replaced_per_lookup × avg_knowledge_read_tokens "
                             "− avg_vectorizer_result_tokens); "
@@ -313,8 +330,9 @@ def _build_payload() -> Dict[str, Any]:
             "Daily numbers are estimates: the ledger records totals per session, "
             "spread across the session's active days by message token weight (MYT).",
             "Costs are the ledger's estimated_cost_usd (fine for ranking spend, not invoicing).",
-            "Meta (muse-spark) sessions are unpriced in the ledger (cost_status=unknown) — "
-            "their cost chart shows $0; the token chart carries their real usage.",
+            "Meta is priced from public list rates (muse-spark-1.3-contributor: "
+            "$0.10/M input, $0.20/M output, $0.002/M cached input; the ledger has "
+            "no price for api.meta.ai) — computed per session from its tokens.",
             "Local LM Studio runs cost $0 in API fees (compute/electricity only).",
             "Vectorizer savings are a documented estimate — the formula and its "
             "measured inputs ship in vectorizer.method.",

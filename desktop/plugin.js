@@ -177,7 +177,7 @@ function CostChartPage() {
           }),
           jsx(StatCard, {
             label: 'Meta total', value: fmtUsd((prov.meta || {}).total ? prov.meta.total.cost_usd : 0),
-            detail: 'muse-spark · unpriced in ledger — see token chart'
+            detail: 'muse-spark-1.3-contributor · priced at list rates'
           }),
           jsx(StatCard, {
             label: 'Local LM', value: fmtTok((prov.local || {}).total ? prov.local.total.input_tokens + prov.local.total.output_tokens : 0) + ' tok',

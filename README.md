@@ -18,14 +18,19 @@ costchart/                      ← the plugin package (this repo root)
 
 ## What the page shows
 
-- **Daily cost by provider (USD, est.)** — stacked bars, from the session
-  ledgers' `estimated_cost_usd`.
-- **Daily tokens by provider** — input + output tokens. This is where Meta's
-  real usage shows: muse-spark sessions are **unpriced in the ledger**
-  (`cost_status: unknown`), so the cost chart shows $0 for Meta by data
-  honesty, not because it was free.
+- **Daily cost by provider (USD, est.)** — stacked bars. Xiaomi and local come
+  from the session ledgers' `estimated_cost_usd`; Meta is priced separately (below).
+- **Daily tokens by provider** — input + output tokens.
 - **Daily tokens saved by Vectorizer (est.)** — see the model below.
 - Summary cards + a **Method** block stating every assumption.
+
+**Meta pricing note:** the ledger has no price for `api.meta.ai`
+(`cost_status: unknown` on every muse-spark session), so the backend computes
+the Meta lane from the model's public list rates instead of showing a fake $0 —
+`muse-spark-1.3-contributor` at **$0.10/M input, $0.20/M output, $0.002/M cached
+input** (the Contributor tier: training rights in exchange for the discount;
+the standard `muse-spark-1.3` ID is $1.25/$4.25). Sources: Baseer model listing,
+explainx.ai cost page, MyClaw.ai pricing table (Oct 2026).
 
 ## How the data is computed
 
