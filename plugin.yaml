@@ -1,0 +1,7 @@
+name: costchart
+version: "1.0.0"
+description: >-
+  Daily AI cost chart for the Hermes Desktop — Xiaomi (MiMo), Meta (muse-spark),
+  and local LM Studio spend per day, plus estimated tokens saved by Vectorizer
+  retrieval-first. Backends reads the per-profile session ledgers (state.db,
+  read-only); the desktop half renders the page.

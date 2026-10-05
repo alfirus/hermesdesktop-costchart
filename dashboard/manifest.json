@@ -1,0 +1,12 @@
+{
+  "name": "costchart",
+  "label": "Cost Chart",
+  "description": "Daily AI spend (Xiaomi / Meta / Local LM) and Vectorizer token savings — backend API for the desktop Cost Chart page",
+  "icon": "Activity",
+  "version": "1.0.0",
+  "tab": {
+    "hidden": true
+  },
+  "slots": [],
+  "api": "plugin_api.py"
+}
