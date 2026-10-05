@@ -139,6 +139,7 @@ function CostChartPage() {
 
   const d = q.data || {}
   const days = d.days || []
+  const win = d.window_days || 31
   const prov = d.providers || {}
   const vec = d.vectorizer || {}
   const m = (vec.method || {})
@@ -164,7 +165,7 @@ function CostChartPage() {
           }),
           jsx('div', {
             className: 'text-[0.6875rem] text-(--ui-text-tertiary)',
-            children: `generated ${d.generated_at || '?'} · ${d.timezone || ''}`
+            children: `last ${win} days · generated ${d.generated_at || '?'} · ${d.timezone || ''}`
           })
         ]
       }),
@@ -172,23 +173,23 @@ function CostChartPage() {
         className: 'grid grid-cols-2 gap-2 md:grid-cols-5',
         children: [
           jsx(StatCard, {
-            label: 'Xiaomi total', value: fmtUsd((prov.xiaomi || {}).total ? prov.xiaomi.total.cost_usd : 0),
+            label: `Xiaomi (${win}d)`, value: fmtUsd((prov.xiaomi || {}).total ? prov.xiaomi.total.cost_usd : 0),
             detail: 'MiMo token plan'
           }),
           jsx(StatCard, {
-            label: 'Meta total', value: fmtUsd((prov.meta || {}).total ? prov.meta.total.cost_usd : 0),
+            label: `Meta (${win}d)`, value: fmtUsd((prov.meta || {}).total ? prov.meta.total.cost_usd : 0),
             detail: 'muse-spark-1.3-contributor · priced at list rates'
           }),
           jsx(StatCard, {
-            label: 'Local LM', value: fmtTok((prov.local || {}).total ? prov.local.total.input_tokens + prov.local.total.output_tokens : 0) + ' tok',
+            label: `Local LM (${win}d)`, value: fmtTok((prov.local || {}).total ? prov.local.total.input_tokens + prov.local.total.output_tokens : 0) + ' tok',
             detail: '$0 API cost — compute only'
           }),
           jsx(StatCard, {
-            label: 'Vectorizer saved (est.)', value: fmtUsd(vec.total_usd_saved || 0),
+            label: `Vectorizer saved (${win}d, est.)`, value: fmtUsd(vec.total_usd_saved || 0),
             detail: fmtTok(vec.total_tokens_saved || 0) + ' tokens · ' + (vec.total_calls || 0) + ' retrievals'
           }),
           jsx(StatCard, {
-            label: 'Total spend', value: fmtUsd(LANES.reduce((a, l) => a + ((prov[l.key] || {}).total ? prov[l.key].total.cost_usd : 0), 0)),
+            label: `Total spend (${win}d)`, value: fmtUsd(LANES.reduce((a, l) => a + ((prov[l.key] || {}).total ? prov[l.key].total.cost_usd : 0), 0)),
             detail: 'all providers'
           })
         ]

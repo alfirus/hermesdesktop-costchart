@@ -225,7 +225,9 @@ def _scan_db(db: Path, buckets: Dict[str, Dict[str, List[float]]], day_index: Di
 
 
 def _build_payload() -> Dict[str, Any]:
-    # Day axis: first ledger activity → today (MYT).
+    # Day axis: a rolling WINDOW_DAYS window ending today (MYT), clipped to the
+    # first day that actually has ledger activity.
+    WINDOW_DAYS = 31
     today = _day(time.time())
     first: Optional[str] = None
     for db in _ledger_paths():
@@ -240,7 +242,10 @@ def _build_payload() -> Dict[str, Any]:
             d = _day(v)
             if d and (first is None or d < first):
                 first = d
+    window_start = _day(time.time() - (WINDOW_DAYS - 1) * 86400)
     start = first or today
+    if window_start and start < window_start:
+        start = window_start
     days: List[str] = []
     t = time.mktime(time.strptime(start, "%Y-%m-%d")) - _TZ_OFFSET
     end_t = time.mktime(time.strptime(today, "%Y-%m-%d")) - _TZ_OFFSET
@@ -297,6 +302,7 @@ def _build_payload() -> Dict[str, Any]:
     return {
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() + _TZ_OFFSET)),
         "timezone": "MYT (UTC+8)",
+        "window_days": WINDOW_DAYS,
         "days": days,
         "providers": providers,
         "vectorizer": {
