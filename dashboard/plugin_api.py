@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import calendar
 import logging
+import os
 import sqlite3
 import threading
 import time
@@ -46,16 +47,23 @@ _KNOWLEDGE_TOOLS = ("session_search", "read_file", "skill_view", "web_extract", 
 # search probe AND a source read — the standard non-retrieval lookup sequence.
 REPLACED_PER_LOOKUP = 2.0
 
-# muse-spark-1.3-contributor list rates ($/1M tokens) — the Contributor tier
-# (training rights in exchange for the discount; the standard muse-spark-1.3
-# ID is $1.25/$4.25). Used as the cost fallback for the spark lanes (meta and
-# opencode-go) when the ledger carries no price for a session (cost_status
-# unknown / estimated_cost_usd 0): the ledger estimate wins whenever present
-# and priced, list rates fill the gap so the chart shows reality, never $0.
-# Sources: Baseer model listing, explainx.ai cost page, MyClaw.ai 1.3 pricing
-# table (Oct 2026). OpenCode Zen Go passes through the same model price — no
-# separate zen list rate is documented, so the same rates apply there until
-# one is published.
+# --- Plan cap configuration ---------------------------------------------------
+# The Xiaomi lane runs on a token plan (token-plan-sgp.xiaomimimo.com).
+# Set HERMES_COSTCHART_XIAOMI_PLAN_CAP to the monthly token allowance.
+# When set, /daily returns burn %, warning level, and month-end projection.
+# Acceptable values: integer token count (e.g. 500_000_000 for 500M).
+# Documented in README.md under "Plan cap configuration".
+PLAN_CAP = int(os.environ.get("HERMES_COSTCHART_XIAOMI_PLAN_CAP", "0")) or None
+
+# --- muse-spark-1.3-contributor list rates ($/1M tokens) ----------------------
+# The Contributor tier (training rights in exchange for the discount; the standard
+# muse-spark-1.3 ID is $1.25/$4.25). Used as the cost fallback for the spark lanes
+# (meta and opencode-go) when the ledger carries no price for a session (cost_status
+# unknown / estimated_cost_usd 0): the ledger estimate wins whenever present and
+# priced, list rates fill the gap so the chart shows reality, never $0.
+# Sources: Baseer model listing, explainx.ai cost page, MyClaw.ai 1.3 pricing table
+# (Oct 2026). OpenCode Zen Go passes through the same model price — no separate zen
+# list rate is documented, so the same rates apply there until one is published.
 _META_RATES_PER_M = {"input": 0.10, "output": 0.20, "cached": 0.002}
 _OPENCODE_GO_RATES_PER_M = dict(_META_RATES_PER_M)
 
@@ -245,6 +253,90 @@ def _scan_db(db: Path, buckets: Dict[str, Dict[str, List[float]]], day_index: Di
         con.close()
 
 
+# --- Plan burn calculation ----------------------------------------------------
+# Computes month-to-date token consumption for the xiaomi lane against a
+# configurable plan cap (HERMES_COSTCHART_XIAOMI_PLAN_CAP).  Returns burn %,
+# warning level, and a simple linear projection to month-end.
+
+
+def _compute_plan_burn(
+    days: List[str],
+    daily_input: List[float],
+    daily_output: List[float],
+) -> Dict[str, Any]:
+    """Calculate MTD burn vs plan cap for the xiaomi lane."""
+    if PLAN_CAP is None or not days:
+        return {"cap": None, "enabled": False}
+
+    # Determine current MYT month boundaries.
+    today_str = _day(time.time())  # e.g. "2026-10-06"
+    if not today_str:
+        return {"cap": None, "enabled": False}
+    try:
+        year, month = map(int, today_str.split("-")[:2])
+    except (ValueError, AttributeError):
+        return {"cap": None, "enabled": False}
+
+    _, last_day = calendar.monthrange(year, month)
+    first_of_month = f"{year}-{month:02d}-01"
+
+    # Sum tokens consumed MTD (input + output for xiaomi lane).
+    mtd_input = 0.0
+    mtd_output = 0.0
+    for i, d in enumerate(days):
+        if not d or d < first_of_month or d > today_str:
+            continue
+        mtd_input += daily_input[i] if i < len(daily_input) else 0
+        mtd_output += daily_output[i] if i < len(daily_output) else 0
+
+    mtd_total = mtd_input + mtd_output
+    burn_pct = (mtd_total / PLAN_CAP * 100) if PLAN_CAP > 0 else 0.0
+
+    # Determine warning level.
+    if burn_pct >= 90:
+        warning_level = "critical"
+    elif burn_pct >= 80:
+        warning_level = "warning"
+    else:
+        warning_level = "ok"
+
+    # Simple linear projection: MTD pace → projected month-end usage.
+    # Count days elapsed in the current month (MYT).
+    try:
+        today_dt = time.strptime(today_str, "%Y-%m-%d")
+        first_dt = time.strptime(first_of_month, "%Y-%m-%d")
+        days_elapsed = (time.mktime(today_dt) - time.mktime(first_dt)) / 86400 + 1
+    except Exception:
+        days_elapsed = 0
+
+    projected = 0.0
+    if days_elapsed > 0 and last_day > 0:
+        daily_avg = mtd_total / days_elapsed
+        remaining_days = max(0, last_day - int(days_elapsed))
+        projected = mtd_total + (daily_avg * remaining_days)
+
+    # Days remaining in the month.
+    try:
+        today_dt = time.strptime(today_str, "%Y-%m-%d")
+        first_dt = time.strptime(first_of_month, "%Y-%m-%d")
+        days_in_month = (time.mktime((year, month + 1 if month < 12 else 1, 1, 0, 0, 0, 0, 0, 0)) - time.mktime(first_dt)) / 86400
+    except Exception:
+        days_in_month = last_day
+
+    return {
+        "cap": PLAN_CAP,
+        "enabled": True,
+        "mtd_tokens_used": round(mtd_total),
+        "mtd_input_tokens": round(mtd_input),
+        "mtd_output_tokens": round(mtd_output),
+        "burn_pct": round(burn_pct, 1),
+        "warning_level": warning_level,
+        "projected_month_end": round(projected),
+        "days_elapsed": int(days_elapsed),
+        "days_remaining_in_month": max(0, last_day - int(days_elapsed)),
+    }
+
+
 def _build_payload() -> Dict[str, Any]:
     # Day axis: a rolling WINDOW_DAYS window ending today (MYT), clipped to the
     # first day that actually has ledger activity.
@@ -324,6 +416,11 @@ def _build_payload() -> Dict[str, Any]:
         for lane in ("xiaomi", "opencode-go", "meta", "local", "other")
     }
 
+    # Plan burn: MTD token consumption vs configurable cap (xiaomi lane only).
+    xiaomi_daily_input = buckets.get("xiaomi", _empty_series(days))["input_tokens"]
+    xiaomi_daily_output = buckets.get("xiaomi", _empty_series(days))["output_tokens"]
+    plan_burn = _compute_plan_burn(days, xiaomi_daily_input, xiaomi_daily_output)
+
     return {
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() + _TZ_OFFSET)),
         "timezone": "MYT (UTC+8)",
@@ -363,6 +460,7 @@ def _build_payload() -> Dict[str, Any]:
                             "later turn of a long session."),
             },
         },
+        "plan_burn": plan_burn,
         "notes": [
             "Daily numbers are estimates: the ledger records totals per session, "
             "spread across the session's active days by message token weight (MYT).",

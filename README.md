@@ -76,6 +76,26 @@ plus the root `state.db`), opened **read-only**.
   the cache re-reads an avoided token skips on every later turn of a long
   session — where the real multiplier lives.
 
+## Plan cap configuration (MiMo token-plan burn)
+
+The Xiaomi lane runs on a **token plan** (`token-plan-sgp.xiaomimimo.com`), not pure pay-as-you-go. When you set the `HERMES_COSTCHART_XIAOMI_PLAN_CAP` environment variable to your monthly token allowance, the Cost Chart page gains:
+
+- A **"Plan burn (MTD)" card** showing month-to-date consumption as a percentage of your plan cap.
+- **Visual warnings**: an orange ⚠ WARNING badge at ≥ 80% burn, and a red ! CRITICAL badge at ≥ 90%.
+- A **progress bar** filling toward the cap.
+- A **month-end projection** based on linear MTD pace (shown when warning level is active).
+
+### How to set it
+
+```bash
+# Add to your shell profile or Hermes service environment:
+export HERMES_COSTCHART_XIAOMI_PLAN_CAP=500000000   # 500M tokens/month
+```
+
+The value must be an integer token count (input + output combined). No code change is needed — just set the env var and restart the Hermes backend. The card disappears entirely if the variable is unset or zero, keeping the page clean for non-plan users.
+
+---
+
 ## Install
 
 ```bash

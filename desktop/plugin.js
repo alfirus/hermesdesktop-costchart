@@ -29,6 +29,13 @@ const LANES = [
 const fmtUsd = n => (n >= 100 ? '$' + Math.round(n) : '$' + (Math.round(n * 100) / 100).toFixed(2))
 const fmtTok = n => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(Math.round(n))
 
+// Plan burn card colors by warning level.
+const BURN_COLORS = {
+  ok:       { bg: 'var(--ui-bg-secondary)',   border: 'var(--ui-stroke-secondary)', text: 'var(--ui-text-primary)' },
+  warning:  { bg: '#7c2d12',                  border: '#ea580c',                 text: '#fed7aa' },
+  critical: { bg: '#450a0a',                  border: '#dc2626',                 text: '#fecaca' }
+}
+
 function sum(arr) {
   return arr.reduce((a, b) => a + b, 0)
 }
@@ -111,6 +118,79 @@ function StatCard({ label, value, detail }) {
   })
 }
 
+/** Plan burn stat card — shows MTD %, warning bar, and month-end projection. */
+function BurnCard({ plan_burn }) {
+  if (!plan_burn || !plan_burn.enabled) return null
+
+  const colors = BURN_COLORS[plan_burn.warning_level] || BURN_COLORS.ok
+  const pct = plan_burn.burn_pct
+  const isWarning = plan_burn.warning_level !== 'ok'
+
+  // Visual progress bar (0–100% of cap).
+  const barWidth = Math.min(100, pct)
+
+  return jsxs('div', {
+    className: 'flex flex-col gap-1 rounded-md border px-3 py-2',
+    style: { borderColor: colors.border },
+    children: [
+      // Header row.
+      jsx('div', {
+        className: 'flex items-center justify-between',
+        children: jsxs('span', {
+          className: 'text-[0.6875rem] font-medium',
+          style: { color: colors.text },
+          children: [
+            'Plan burn (MTD)',
+            isWarning && jsx('span', {
+              className: 'ml-1 inline-flex items-center gap-0.5 rounded px-1 text-[0.625rem] font-bold',
+              style: { background: colors.border, color: '#fff' },
+              children: plan_burn.warning_level === 'critical' ? '! CRITICAL' : '⚠ WARNING'
+            })
+          ]
+        })
+      }),
+
+      // Big percentage.
+      jsx('div', {
+        className: 'text-lg font-bold tabular-nums',
+        style: { color: colors.text },
+        children: pct.toFixed(1) + '%'
+      }),
+
+      // Progress bar.
+      jsx('div', {
+        className: 'h-2 w-full overflow-hidden rounded bg-(--ui-bg-tertiary)',
+        children: jsx('div', {
+          className: 'h-full transition-all duration-300',
+          style: { width: barWidth + '%', background: colors.border }
+        })
+      }),
+
+      // Details row.
+      jsxs('div', {
+        className: 'flex items-center justify-between text-[0.625rem]',
+        style: { color: isWarning ? '#fdba74' : 'var(--ui-text-tertiary)' },
+        children: [
+          jsx('span', {
+            children: fmtTok(plan_burn.mtd_tokens_used) + ' / ' + fmtTok(plan_burn.cap) + ' tokens used'
+          }),
+          jsx('span', {
+            children: plan_burn.days_elapsed + '/' + (plan_burn.days_elapsed + plan_burn.days_remaining_in_month) + ' days elapsed'
+          })
+        ]
+      }),
+
+      // Projection.
+      isWarning ? jsx('div', {
+        className: 'text-[0.625rem] font-medium',
+        style: { color: colors.text },
+        children: 'Projected month-end: ' + fmtTok(plan_burn.projected_month_end) + ' tokens' +
+          (plan_burn.projected_month_end > plan_burn.cap ? ' (' + fmtTok(Math.round((plan_burn.projected_month_end - plan_burn.cap))) + ' over cap)' : '')
+      }) : null
+    ]
+  })
+}
+
 function CostChartPage() {
   const q = useQuery({
     queryKey: ['costchart', 'daily'],
@@ -144,6 +224,7 @@ function CostChartPage() {
   const prov = d.providers || {}
   const vec = d.vectorizer || {}
   const m = (vec.method || {})
+  const plan_burn = d.plan_burn || {}
 
   const costSeries = LANES.map(l => ({ key: l.key, opacity: l.opacity, values: (prov[l.key] || {}).daily ? prov[l.key].daily.cost_usd : [] }))
   const tokSeries = LANES.map(l => ({
@@ -199,6 +280,7 @@ function CostChartPage() {
           })
         ]
       }),
+      jsx(BurnCard, { plan_burn: plan_burn }),
       jsxs('div', { className: 'flex flex-col gap-1', children: [
         jsx('div', { className: 'font-medium', children: 'Daily cost by provider (USD, est.)' }),
         jsx(BarChart, { days, series: costSeries, fmt: fmtUsd }),
