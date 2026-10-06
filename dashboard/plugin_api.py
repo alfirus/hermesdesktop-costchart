@@ -1,12 +1,13 @@
 """Cost Chart backend — daily AI spend + Vectorizer savings, mounted at /api/plugins/costchart/.
 
 Reads every Hermes profile's session ledger (``state.db``, opened read-only) and
-attributes token spend to the three provider lanes:
+attributes token spend to the four provider lanes:
 
-- ``xiaomi``  — MiMo token-plan sessions (``token-plan-sgp.xiaomimimo.com``)
-- ``meta``    — meta-ai / muse-spark sessions (``api.meta.ai``)
-- ``local``   — local LM Studio sessions (``localhost:1234`` / ``127.0.0.1:1234``)
-- ``other``   — anything else (kept visible so totals reconcile)
+- ``xiaomi``      — MiMo token-plan sessions (``token-plan-sgp.xiaomimimo.com``)
+- ``opencode-go`` — muse-spark sessions via OpenCode Zen Go (``opencode.ai/zen/go``)
+- ``meta``        — meta-ai / muse-spark sessions (``api.meta.ai``)
+- ``local``       — local LM Studio sessions (``localhost:1234`` / ``127.0.0.1:1234``)
+- ``other``       — anything else (kept visible so totals reconcile)
 
 Daily attribution: the ledger stores totals per SESSION, and long-lived sessions
 span days. Each session's totals are spread across its active days pro-rata by
@@ -22,6 +23,7 @@ Vectorizer result size — and priced at the fleet's blended non-cache token rat
 
 from __future__ import annotations
 
+import calendar
 import logging
 import sqlite3
 import threading
@@ -44,13 +46,26 @@ _KNOWLEDGE_TOOLS = ("session_search", "read_file", "skill_view", "web_extract", 
 # search probe AND a source read — the standard non-retrieval lookup sequence.
 REPLACED_PER_LOOKUP = 2.0
 
-# Meta lane pricing — the ledger has no price for api.meta.ai (cost_status
-# unknown), so cost is computed from the model's public list rates.
-# muse-spark-1.3-contributor tier (training rights in exchange for the
-# discount; the standard muse-spark-1.3 ID is $1.25/$4.25): $/1M tokens.
+# muse-spark-1.3-contributor list rates ($/1M tokens) — the Contributor tier
+# (training rights in exchange for the discount; the standard muse-spark-1.3
+# ID is $1.25/$4.25). Used as the cost fallback for the spark lanes (meta and
+# opencode-go) when the ledger carries no price for a session (cost_status
+# unknown / estimated_cost_usd 0): the ledger estimate wins whenever present
+# and priced, list rates fill the gap so the chart shows reality, never $0.
 # Sources: Baseer model listing, explainx.ai cost page, MyClaw.ai 1.3 pricing
-# table (Oct 2026).
+# table (Oct 2026). OpenCode Zen Go passes through the same model price — no
+# separate zen list rate is documented, so the same rates apply there until
+# one is published.
 _META_RATES_PER_M = {"input": 0.10, "output": 0.20, "cached": 0.002}
+_OPENCODE_GO_RATES_PER_M = dict(_META_RATES_PER_M)
+
+
+def _list_rate_cost(in_tok: float, out_tok: float, cache_tok: float,
+                   rates: Dict[str, float]) -> float:
+    """Cost in USD for token counts at ``rates`` ($/1M tokens)."""
+    return (in_tok * rates["input"]
+            + cache_tok * rates["cached"]
+            + out_tok * rates["output"]) / 1_000_000.0
 
 _cache: Dict[str, Any] = {}
 _cache_at = 0.0
@@ -95,6 +110,8 @@ def _provider(billing_provider: Optional[str], base_url: Optional[str], model: O
     mod = (model or "").lower()
     if "xiaomimimo" in base or prov == "xiaomi":
         return "xiaomi"
+    if "opencode.ai/zen/go" in base or prov == "opencode-go":
+        return "opencode-go"
     if "meta.ai" in base or prov == "meta-ai":
         return "meta"
     if "127.0.0.1:1234" in base or "localhost:1234" in base or prov in ("custom", "lmstudio"):
@@ -160,12 +177,16 @@ def _scan_db(db: Path, buckets: Dict[str, Dict[str, List[float]]], day_index: Di
             series = buckets.setdefault(lane, _empty_series(list(day_index)))
             vals = (float(in_tok or 0), float(out_tok or 0), float(cache_tok or 0),
                     float(calls or 0), float(cost or 0))
-            # The ledger prices the meta lane as unknown (est cost 0) — compute
-            # it from the public list rates instead so the chart shows reality.
-            if lane == "meta":
-                vals = vals[:4] + ((vals[0] * _META_RATES_PER_M["input"]
-                                    + vals[2] * _META_RATES_PER_M["cached"]
-                                    + vals[1] * _META_RATES_PER_M["output"]) / 1_000_000.0,)
+            # The spark lanes (meta, opencode-go) usually arrive unpriced
+            # (cost_status unknown, est $0) — price those sessions from the
+            # public list rates so the chart shows reality. A ledger estimate
+            # wins whenever present and priced (est > 0).
+            if lane == "meta" and vals[4] <= 0:
+                vals = vals[:4] + (_list_rate_cost(
+                    vals[0], vals[1], vals[2], _META_RATES_PER_M),)
+            elif lane == "opencode-go" and vals[4] <= 0:
+                vals = vals[:4] + (_list_rate_cost(
+                    vals[0], vals[1], vals[2], _OPENCODE_GO_RATES_PER_M),)
             w_by_day = weights.get(sid)
             if w_by_day:
                 total_w = sum(w_by_day.values())
@@ -247,8 +268,12 @@ def _build_payload() -> Dict[str, Any]:
     if window_start and start < window_start:
         start = window_start
     days: List[str] = []
-    t = time.mktime(time.strptime(start, "%Y-%m-%d")) - _TZ_OFFSET
-    end_t = time.mktime(time.strptime(today, "%Y-%m-%d")) - _TZ_OFFSET
+    # TZ-independent anchors: timegm parses as UTC, so the axis covers
+    # start..today (MYT dates) no matter the host's local timezone.
+    # (time.mktime here read the date in host-local time and silently ended
+    # the axis yesterday on UTC+8 hosts, dropping today's spend.)
+    t = calendar.timegm(time.strptime(start, "%Y-%m-%d")) - _TZ_OFFSET
+    end_t = calendar.timegm(time.strptime(today, "%Y-%m-%d")) - _TZ_OFFSET
     while t <= end_t + 1:
         days.append(_day(t))
         t += 86400
@@ -296,7 +321,7 @@ def _build_payload() -> Dict[str, Any]:
                 "calls": round(sum(buckets.get(lane, _empty_series(days))["calls"])),
             },
         }
-        for lane in ("xiaomi", "meta", "local", "other")
+        for lane in ("xiaomi", "opencode-go", "meta", "local", "other")
     }
 
     return {
@@ -321,6 +346,12 @@ def _build_payload() -> Dict[str, Any]:
                 "meta_rates_per_m": dict(_META_RATES_PER_M),
                 "meta_rates_source": ("muse-spark-1.3-contributor public list pricing "
                                       "(Baseer / explainx.ai / MyClaw.ai, Oct 2026)"),
+                "opencode_go_rates_per_m": dict(_OPENCODE_GO_RATES_PER_M),
+                "opencode_go_rates_source": ("same muse-spark-1.3-contributor list "
+                                             "rates — ledger carries no zen price "
+                                             "(cost_status unknown on 30/31 sessions "
+                                             "checked 2026-10-06); the 1 priced session "
+                                             "keeps its ledger estimate"),
                 "formula": ("saved/day = vectorizer_calls/day × max(0, "
                             "replaced_per_lookup × avg_knowledge_read_tokens "
                             "− avg_vectorizer_result_tokens); "
@@ -339,6 +370,10 @@ def _build_payload() -> Dict[str, Any]:
             "Meta is priced from public list rates (muse-spark-1.3-contributor: "
             "$0.10/M input, $0.20/M output, $0.002/M cached input; the ledger has "
             "no price for api.meta.ai) — computed per session from its tokens.",
+            "OpenCode Go (opencode.ai/zen/go, muse-spark-1.3-contributor) uses the "
+            "same list rates when the ledger carries no price (cost_status unknown "
+            "— true for nearly all zen sessions checked); a ledger estimate wins "
+            "whenever present and priced, so priced zen sessions keep their own cost.",
             "Local LM Studio runs cost $0 in API fees (compute/electricity only).",
             "Vectorizer savings are a documented estimate — the formula and its "
             "measured inputs ship in vectorizer.method.",

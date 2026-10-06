@@ -1,5 +1,5 @@
 /**
- * Cost Chart — daily AI spend (Xiaomi · Meta · Local LM) + Vectorizer savings.
+ * Cost Chart — daily AI spend (Xiaomi · OpenCode Go · Meta · Local LM) + Vectorizer savings.
  *
  * Unified Hermes plugin package: this is the DESKTOP half (`desktop/plugin.js`),
  * with the ledger aggregation backend in `dashboard/plugin_api.py` mounted at
@@ -20,6 +20,7 @@ let ctx = null
 
 const LANES = [
   { key: 'xiaomi', label: 'Xiaomi (MiMo)', opacity: 1 },
+  { key: 'opencode-go', label: 'OpenCode Go (muse-spark)', opacity: 0.8 },
   { key: 'meta', label: 'Meta (muse-spark)', opacity: 0.55 },
   { key: 'local', label: 'Local LM Studio', opacity: 0.3 },
   { key: 'other', label: 'Other', opacity: 0.15 }
@@ -170,11 +171,15 @@ function CostChartPage() {
         ]
       }),
       jsx('div', {
-        className: 'grid grid-cols-2 gap-2 md:grid-cols-5',
+        className: 'grid grid-cols-2 gap-2 md:grid-cols-6',
         children: [
           jsx(StatCard, {
             label: `Xiaomi (${win}d)`, value: fmtUsd((prov.xiaomi || {}).total ? prov.xiaomi.total.cost_usd : 0),
             detail: 'MiMo token plan'
+          }),
+          jsx(StatCard, {
+            label: `OpenCode Go (${win}d)`, value: fmtUsd((prov['opencode-go'] || {}).total ? prov['opencode-go'].total.cost_usd : 0),
+            detail: 'muse-spark-1.3-contributor · ledger, else list rates'
           }),
           jsx(StatCard, {
             label: `Meta (${win}d)`, value: fmtUsd((prov.meta || {}).total ? prov.meta.total.cost_usd : 0),
@@ -252,7 +257,7 @@ export default {
         data: {
           id: 'open-cost-chart',
           label: 'Open Cost Chart',
-          keywords: ['cost', 'chart', 'xiaomi', 'muse', 'vectorizer', 'spend'],
+          keywords: ['cost', 'chart', 'xiaomi', 'muse', 'vectorizer', 'spend', 'opencode', 'zen go'],
           run: () => host.navigate(PATH)
         }
       }

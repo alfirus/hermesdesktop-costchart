@@ -1,8 +1,9 @@
 # hermesdesktop-costchart
 
 A **Hermes Desktop plugin**: one page of daily charts showing what the fleet
-spends on each AI lane — **Xiaomi (MiMo token plan)**, **Meta (muse-spark)** and
-**Local LM Studio** — and an estimate of **how many tokens Vectorizer saves us**
+spends on each AI lane — **Xiaomi (MiMo token plan)**, **OpenCode Go
+(muse-spark via OpenCode Zen)**, **Meta (muse-spark)** and **Local LM
+Studio** — and an estimate of **how many tokens Vectorizer saves us**
 by answering knowledge questions from retrieval instead of context-heavy reads.
 
 ```
@@ -19,7 +20,8 @@ costchart/                      ← the plugin package (this repo root)
 ## What the page shows
 
 - **Daily cost by provider (USD, est.)** — stacked bars. Xiaomi and local come
-  from the session ledgers' `estimated_cost_usd`; Meta is priced separately (below).
+  from the session ledgers' `estimated_cost_usd`; Meta and OpenCode Go are
+  priced separately (below).
 - **Daily tokens by provider** — input + output tokens.
 - **Daily tokens saved by Vectorizer (est.)** — see the model below.
 - Summary cards + a **Method** block stating every assumption.
@@ -32,14 +34,27 @@ input** (the Contributor tier: training rights in exchange for the discount;
 the standard `muse-spark-1.3` ID is $1.25/$4.25). Sources: Baseer model listing,
 explainx.ai cost page, MyClaw.ai pricing table (Oct 2026).
 
+**OpenCode Go pricing note:** `muse-spark-1.3-contributor` sessions arriving via
+`opencode.ai/zen/go` (`billing_provider: opencode-go`) are attributed to their
+own lane — not Meta. Same honesty policy: the ledger carries no zen price
+(`cost_status: unknown`, `estimated_cost_usd` 0 on 30 of 31 sessions checked
+2026-10-06), so unpriced zen sessions fall back to the same Contributor list
+rates above (no separate zen list rate is documented; OpenCode Zen Go passes
+through the model price). A ledger estimate wins whenever present and priced —
+the one priced zen session keeps its own cost instead of being repriced.
+
 ## How the data is computed
 
 Backend scans every profile's session ledger (`<hermes root>/profiles/*/state.db`
 plus the root `state.db`), opened **read-only**.
 
 - **Provider lanes** by `billing_base_url` / `billing_provider`:
-  `token-plan-sgp.xiaomimimo.com` → xiaomi · `api.meta.ai` → meta ·
+  `token-plan-sgp.xiaomimimo.com` → xiaomi ·
+  `opencode.ai/zen/go` (or `billing_provider: opencode-go`) → opencode-go ·
+  `api.meta.ai` → meta ·
   `localhost:1234` / `127.0.0.1:1234` → local · anything else → other.
+  (`muse-spark` sessions arriving via the zen URL land in opencode-go, not meta;
+  only genuine `api.meta.ai` sessions stay in the meta lane.)
 - **Daily attribution**: the ledger stores totals per session and long sessions
   span days, so each session's totals are spread across its active days
   pro-rata by that day's message weight (`messages.token_count`, falling back to
